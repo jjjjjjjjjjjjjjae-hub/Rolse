@@ -28,13 +28,37 @@ jobs:
         echo "$GITHUB_WORKSPACE/bin" >> $GITHUB_PATH
         wget -q https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar -O uber-apk-signer.jar
 
-    - name: Decompile, Patch and Rebuild
+    - name: Decompile APK
       run: |
         if [ -f "base.apk" ]; then
           apktool d base.apk -o decompiled_source
-          # Құлыптау жүйесін өшіру (мысал ретінде LockActivity)
-          sed -i '/LockActivity/d' decompiled_source/AndroidManifest.xml
+        else
+          echo "base.apk табылмады!"
+          exit 1
+        fi
+
+    - name: Patch Password / Verification Screen
+      run: |
+        echo "[*] Құпия сөзді тексеретін логиканы өзгерту..."
+        
+        # Құлыптау немесе логин терезелерін айналып өтудің негізгі әдісі:
+        # Тексеру функцияларының (мысалы, checkPassword, isVerified, isValid) мәнін әрдайым 'true' (1) қайтаратындай етіп өзгерту.
+        # Төмендегі команда smali кодтар ішіндегі логикалық тексерістерді автоматты түрде True қылып өзгертеді:
+        find decompiled_source/smali* -type f -name "*.smali" | xargs sed -i 's/isVerified()Z/const\/4 v0, 0x1\n    return v0/g' 2>/dev/null || true
+        find decompiled_source/smali* -type f -name "*.smali" | xargs sed -i 's/checkPassword()Z/const\/4 v0, 0x1\n    return v0/g' 2>/dev/null || true
+        
+        # Егер құлыптау экраны белгілі бір Activity болса, оны Manifest-тен өшіруге де болады:
+        # sed -i '/LockActivity/d' decompiled_source/AndroidManifest.xml
+
+    - name: Rebuild APK
+      run: |
+        if [ -d "decompiled_source" ]; then
           apktool b decompiled_source -o unsigned_modified.apk
+        fi
+
+    - name: Sign APK
+      run: |
+        if [ -f "unsigned_modified.apk" ]; then
           java -jar uber-apk-signer.jar --apks unsigned_modified.apk --allowResign
         fi
 
