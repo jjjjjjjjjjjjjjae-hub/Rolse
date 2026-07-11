@@ -1,0 +1,45 @@
+name: Decompile, Patch and Build APK
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'zulu'
+        java-version: '17'
+
+    - name: Install Apktool & Signer
+      run: |
+        mkdir -p bin
+        wget -q https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool -O bin/apktool
+        wget -q https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar -O bin/apktool.jar
+        chmod +x bin/apktool
+        echo "$GITHUB_WORKSPACE/bin" >> $GITHUB_PATH
+        wget -q https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar -O uber-apk-signer.jar
+
+    - name: Decompile, Patch and Rebuild
+      run: |
+        if [ -f "base.apk" ]; then
+          apktool d base.apk -o decompiled_source
+          # Құлыптау жүйесін өшіру (мысал ретінде LockActivity)
+          sed -i '/LockActivity/d' decompiled_source/AndroidManifest.xml
+          apktool b decompiled_source -o unsigned_modified.apk
+          java -jar uber-apk-signer.jar --apks unsigned_modified.apk --allowResign
+        fi
+
+    - name: Upload Modified APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Patched-APK
+        path: ./*-aligned-signed.apk
