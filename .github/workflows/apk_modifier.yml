@@ -1,4 +1,4 @@
-name: Heavy Reverse Engineering Patch
+name: Dynamic Dex Patch & Deep Rebuild
 
 on:
   push:
@@ -19,92 +19,38 @@ jobs:
         distribution: 'zulu'
         java-version: '17'
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.x'
-
-    - name: Install Tools
+    - name: Install Pure Tools
       run: |
         wget -q https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar -O apktool.jar
         wget -q https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar -O uber-apk-signer.jar
 
-    - name: Decompile APK (Safe Mode)
+    - name: Non-Destructive Decode
       run: |
-        if [ -f "base.apk" ]; then
-          # -r жалаушасы арқылы ресурстарды мүлдем ашпаймыз, файл көлемі өспейді және зақымдалмайды
-          java -jar apktool.jar d base.apk -o decompiled_source -r -f
-        else
-          echo "base.apk табылмады!"
-          exit 1
+        # Тек қана кластарды ашу, ресурстарға (картинка, мәтін, манифест) мүлдем тиіспеу
+        java -jar apktool.jar d base.apk -o decompiled_source -r -f
+
+    - name: Apply Sub-Routine Inversion
+      run: |
+        # Лицензияны тексеретін шартты операторларды синтаксиске зақым келтірмей тек осы файлда ғана өңдеу
+        TARGET_FILES=$(grep -rlE "@kozha_0222|Активация лицензии" decompiled_source/smali* 2>/dev/null || true)
+        if [ -n "$TARGET_FILES" ]; then
+          for file in $TARGET_FILES; do
+            echo "Хирургиялық патч: $file"
+            # Тексеріс шарттарының бағытын өзгерту (мысалы, қате болса да өткізу)
+            sed -i 's/\bif-eqz\b/if-nez/g' "$file"
+          done
         fi
 
-    - name: Run Powerful Python Patcher (Құлыпты түпкілікті жою)
+    - name: Rebuild and Align Package
       run: |
-        cat << 'EOF' > patcher.py
-        import os
-        import re
-
-        print("[*] Қуатты байткод патчері іске қосылды...")
-        
-        # Суреттегі құлып белгілерін іздеу нүктелері
-        target_keywords = [b"@kozha_0222", "Активация лицензии".encode('utf-8')]
-        
-        for root, dirs, files in os.walk("decompiled_source"):
-            for file in files:
-                if file.endswith(".smali"):
-                    file_path = os.path.join(root, file)
-                    with open(file_path, "rb") as f:
-                        content = f.read()
-                    
-                    # Егер файл ішінде бұғаттаушының белгілері табылса
-                    if any(kw in content for kw in target_keywords):
-                        print(f"[+] Бұғаттау коды табылды: {file_path}")
-                        text = content.decode('utf-8', errors='ignore')
-                        
-                        # НАҒЫЗ ХАКЕРЛІК ӘДІС:
-                        # 1. Терезені жауып тастайтын finish() функцияларын толық зарарсыздандыру
-                        text = re.sub(r'invoke-virtual \{([^}]+)\}, Landroid/app/Activity;->finish\(\)V', r'# finish() жойылды', text)
-                        text = re.sub(r'invoke-virtual \{([^}]+)\}, Landroid/support/v4/app/FragmentActivity;->finish\(\)V', r'# finish() жойылды', text)
-                        text = re.sub(r'invoke-virtual \{([^}]+)\}, Landroidx/fragment/app/FragmentActivity;->finish\(\)V', r'# finish() жойылды', text)
-                        
-                        # 2. Кілтті тексеретін шартты секіру операторларын (if-eqz, if-nez) синтаксисті бұзбай бейтараптандыру
-                        # Оларды бірден келесі код жолына өтетіндей (Nop немесе шартты өзгерту) өңдейміз
-                        text = text.replace("if-eqz", "if-nez")
-                        
-                        with open(file_path, "w", encoding="utf-8") as f:
-                            f.write(text)
-
-        # Барлық басқа да ықтимал лицензия функцияларын байткод деңгейінде True қайтаратындай ету
-        for root, dirs, files in os.walk("decompiled_source"):
-            for file in files:
-                if file.endswith(".smali"):
-                    file_path = os.path.join(root, file)
-                    with open(file_path, "r", encoding="utf-8", errors='ignore') as f:
-                        t = f.read()
-                    if "isVerified()Z" in t or "checkLicense()Z" in t:
-                        t = re.sub(r'\.method public.*isVerified\(\)Z.*?.end method', '.method public isVerified()Z\n    .locals 1\n    const/4 v0, 0x1\n    return v0\n.end method', t, flags=re.DOTALL)
-                        t = re.sub(r'\.method public.*checkLicense\(\)Z.*?.end method', '.method public checkLicense()Z\n    .locals 1\n    const/4 v0, 0x1\n    return v0\n.end method', t, flags=re.DOTALL)
-                        with open(file_path, "w", encoding="utf-8") as f:
-                            f.write(t)
-        EOF
-        python3 patcher.py
-
-    - name: Rebuild APK (Clean Mode)
-      run: |
+        # Қайта жинақтау (Ресурстар өзгермегендіктен файл өлшемі өспейді)
         java -jar apktool.jar b decompiled_source -o unsigned_modified.apk
+        
+        # Қол қою және Android 16+ үшін оңтайландыру (V2/V3 қолтаңбалары)
+        java -jar uber-apk-signer.jar --apks unsigned_modified.apk --allowResign
+        mv unsigned_modified-aligned-signed.apk patched_output.apk 2>/dev/null || mv unsigned_modified.apk patched_output.apk
 
-    - name: Sign APK (Universal Verification)
-      run: |
-        if [ -f "unsigned_modified.apk" ]; then
-          java -jar uber-apk-signer.jar --apks unsigned_modified.apk --allowResign
-          mv unsigned_modified-aligned-signed.apk patched_output.apk 2>/dev/null || mv unsigned_modified.apk patched_output.apk
-        else
-          echo "Қайта жинау сәтсіз аяқталды!"
-          exit 1
-        fi
-
-    - name: Upload Clean Patched APK
+    - name: Deliver Clean Patched APK
       uses: actions/upload-artifact@v4
       with:
         name: Patched-APK
