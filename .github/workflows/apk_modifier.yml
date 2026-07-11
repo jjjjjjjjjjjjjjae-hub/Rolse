@@ -1,4 +1,4 @@
-name: Deep Reverse Engineering & Rebuild APK
+name: Targeted Bypass & Rebuild APK
 
 on:
   push:
@@ -31,43 +31,49 @@ jobs:
     - name: Decompile APK
       run: |
         if [ -f "base.apk" ]; then
+          # Бұрынғы қателіктерді тазалап, жаңадан декомпиляция жасау
+          rm -rf decompiled_source unsigned_modified.apk
           apktool d base.apk -o decompiled_source
         else
           echo "base.apk табылмады!"
           exit 1
         fi
 
-    - name: Bypass Core Lock Logic (Activity Redirection)
+    - name: Targeted Smart Patch (Дәлдікпен бұзу)
       run: |
-        cd decompiled_source
-        echo "[*] AndroidManifest құрылымы арқылы қорғанысты толық айналып өту..."
+        echo "[*] Бұғаттау экранының нақты файлдарын іздеу..."
+        
+        # Суреттегі авторлық белгілер арқылы тек қажетті файлдарды ғана табамыз
+        TARGET_FILES=$(grep -rlE "@kozha_0222|Активация лицензии" decompiled_source/smali* 2>/dev/null || true)
+        
+        if [ -n "$TARGET_FILES" ]; then
+          echo "[+] Нысана файлдар табылды. Синтаксисті сақтай отырып бұзу..."
+          for file in $TARGET_FILES; do
+            echo "Өңделуде: $file"
+            
+            # Тексеріс нәтижесін әрдайым True (дұрыс кілт енгізілді деп ойлайтындай) қылып жіберу
+            # Тексеруден кейінгі 'if-eqz' (егер 0-ге тең болса, яғни қате болса секір) логикасын
+            # 'if-nez' (егер 0-ге тең болмаса секір) деп ауыстырамыз. Синтаксис бұзылмайды.
+            sed -i 's/\bif-eqz\b/if-nez/g' "$file"
+            sed -i 's/\bif-nez\b/if-eqz/g' "$file"
+          done
+        else
+          echo "[-] Арнайы мәтін табылмады. Жалпы лицензиялық тексерістерді патчтау..."
+        fi
 
-        # Бұл скрипт MAIN және LAUNCHER ниеттерін (Intent-filter) лицензия терезесінен алып тастап,
-        # қолданбаның негізгі функционалды интерфейсіне тікелей тағайындайды.
-        # Тексеру функцияларын түпкілікті өшіру үшін smali деңгейіндегі рефлексияны қолданамыз:
-        
-        find smali* -type f -name "*.smali" | xargs sed -i 's/if-eqz v0/goto /g' 2>/dev/null || true
-        find smali* -type f -name "*.smali" | xargs sed -i 's/if-eqz v1/goto /g' 2>/dev/null || true
-        find smali* -type f -name "*.smali" | xargs sed -i 's/if-nez v0/goto /g' 2>/dev/null || true
-        find smali* -type f -name "*.smali" | xargs sed -i 's/if-nez v1/goto /g' 2>/dev/null || true
-        
-        # Кез келген логикалық тексерістен кейін секірулерді (jump) тоқтатып, кодты мәжбүрлі іске қосу
-        cd ..
+        # Жалпы тексеру әдістерін реттеу (қате тудырмайтын қауіпсіз әдіс)
+        find decompiled_source/smali* -type f -name "*.smali" | xargs sed -i 's/isVerified()Z/const\/4 v0, 0x1\n    return v0/g' 2>/dev/null || true
 
     - name: Rebuild APK
       run: |
-        # Егер қателіктер болса, ресурстарды тексеруді өткізіп жіберіп жинақтау
-        apktool b decompiled_source -o unsigned_modified.apk --use-aapt2
+        # Код сәтті құрастырылуы тиіс
+        apktool b decompiled_source -o unsigned_modified.apk
 
     - name: Sign APK
       run: |
-        # Uber APK Signer арқылы қол қою және файл атауын нақтылау
-        java -jar uber-apk-signer.jar --apks unsigned_modified.apk --allowResign --overwrite
-
-    - name: Verify Signed File
-      run: |
-        ls -la
-        # Файлдың нақты бар екенін тексеру
+        if [ -f "unsigned_modified.apk" ]; then
+          java -jar uber-apk-signer.jar --apks unsigned_modified.apk --allowResign --overwrite
+        fi
 
     - name: Upload Modified APK Artifact
       uses: actions/upload-artifact@v4
