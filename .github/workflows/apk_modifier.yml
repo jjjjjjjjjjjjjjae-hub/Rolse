@@ -37,18 +37,36 @@ jobs:
           exit 1
         fi
 
-    - name: Patch Password / Verification Screen
+    - name: Advanced Lock Screen Bypass (Суреттегі құлыпты бұзу)
       run: |
-        echo "[*] Құпия сөзді тексеретін логиканы өзгерту..."
+        echo "[*] Арнайы бұзу алгоритмі іске қосылды..."
         
-        # Құлыптау немесе логин терезелерін айналып өтудің негізгі әдісі:
-        # Тексеру функцияларының (мысалы, checkPassword, isVerified, isValid) мәнін әрдайым 'true' (1) қайтаратындай етіп өзгерту.
-        # Төмендегі команда smali кодтар ішіндегі логикалық тексерістерді автоматты түрде True қылып өзгертеді:
+        # 1-әдіс: Суреттегі мәтіндер мен Телеграм сілтемесі арқылы Блокер файлын табу
+        # Шартты тексерулерді (if-eqz, if-nez) автоматты түрде қарама-қарсы бағытқа ауыстыру
+        TARGET_FILES=$(grep -rlE "@kozha_0222|Активация лицензии|Введите ключ" decompiled_source/smali* 2>/dev/null || true)
+        
+        if [ -n "$TARGET_FILES" ]; then
+          echo "[+] Құлыптау коды бар файлдар табылды. Логика бұзылуда..."
+          for file in $TARGET_FILES; do
+            echo "Патчталуда: $file"
+            # Тексеріс шарттарын (Логикалық секірулерді) төңкеріп тастау (Инверсия)
+            sed -i 's/if-eqz v0/if-nez v0/g' "$file"
+            sed -i 's/if-eqz v1/if-nez v1/g' "$file"
+            sed -i 's/if-nez v0/if-eqz v0/g' "$file"
+            sed -i 's/if-nez v1/if-eqz v1/g' "$file"
+            
+            # Егер бұл функция мән қайтаратын болса, оны әрдайым True (1) қылу
+            sed -i 's/return v0/const\/4 v0, 0x1\n    return v0/g' "$file"
+            sed -i 's/return v1/const\/4 v1, 0x1\n    return v1/g' "$file"
+          done
+        else
+          echo "[-] Smali-ден тікелей мәтін табылмады, ресурстар арқылы іздеу..."
+        fi
+
+        # 2-әдіс: Жалпы тексеру әдістерінің (Method) жауабын True-ға мәжбүрлеу
         find decompiled_source/smali* -type f -name "*.smali" | xargs sed -i 's/isVerified()Z/const\/4 v0, 0x1\n    return v0/g' 2>/dev/null || true
         find decompiled_source/smali* -type f -name "*.smali" | xargs sed -i 's/checkPassword()Z/const\/4 v0, 0x1\n    return v0/g' 2>/dev/null || true
-        
-        # Егер құлыптау экраны белгілі бір Activity болса, оны Manifest-тен өшіруге де болады:
-        # sed -i '/LockActivity/d' decompiled_source/AndroidManifest.xml
+        find decompiled_source/smali* -type f -name "*.smali" | xargs sed -i 's/checkLicense()Z/const\/4 v0, 0x1\n    return v0/g' 2>/dev/null || true
 
     - name: Rebuild APK
       run: |
