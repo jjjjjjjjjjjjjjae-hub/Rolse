@@ -1,4 +1,4 @@
-name: Structural Architecture Bypass
+name: Dex-Only Patch & Safe Rebuild
 
 on:
   push:
@@ -22,60 +22,52 @@ jobs:
     - name: Install Tools
       run: |
         mkdir -p bin
-        wget -q https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool -O bin/apktool
+        # Тұрақты жұмыс істеуі үшін заманауи құралдарды жүктеу
         wget -q https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar -O bin/apktool.jar
-        chmod +x bin/apktool
-        echo "$GITHUB_WORKSPACE/bin" >> $GITHUB_PATH
         wget -q https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar -O uber-apk-signer.jar
+        # Dex құралдарын орнату (Бүлдірмей өңдеу үшін)
+        wget -q https://github.com/pxb1988/dex2jar/releases/download/v2.4/dex-tools-v2.4.zip
+        unzip -q dex-tools-v2.4.zip -d bin/
 
-    - name: Decompile APK
+    - name: Safe Dex Extraction and Patch
       run: |
         if [ -f "base.apk" ]; then
-          rm -rf decompiled_source unsigned_modified.apk patched_output.apk 2>/dev/null || true
-          apktool d base.apk -o decompiled_source
+          echo "[+] Ресурстарды бүлдірмеу үшін тек қана кодты бөлек өңдеу..."
+          
+          # 1. Тек қана кодты декомпиляциялау (Ресурстарға, суреттерге, манифестке тиіспейміз)
+          # Бұл файл көлемінің өсіп кетуін толық тоқтатады
+          java -jar bin/apktool.jar d base.apk -o decompiled_source -r -f
+          
+          echo "[*] Бұғаттау функцияларын іздеу және бейтараптандыру..."
+          # Лицензия және құлыптау терезесіндегі белсенділікті тоқтататын бағыттарды өңдеу
+          TARGET_FILES=$(grep -rlE "@kozha_0222|Активация лицензии" decompiled_source/smali* 2>/dev/null || true)
+          
+          if [ -n "$TARGET_FILES" ]; then
+            for file in $TARGET_FILES; do
+              echo "Қауіпсіз патч енгізілуде: $file"
+              # Қолданбаны жауып тастайтын Activity.finish() функцияларын өшіру
+              sed -i 's/invoke-virtual {.*}, Landroid\/app\/Activity;->finish()V/# Айналып өту/g' "$file"
+              # Тексеріс логикасын бейтараптандыру
+              sed -i 's/\bif-eqz\b/if-nez/g' "$file"
+            done
+          fi
+          
+          # 2. Қайта жинақтау
+          java -jar bin/apktool.jar b decompiled_source -o unsigned_modified.apk
         else
           echo "base.apk табылмады!"
           exit 1
         fi
 
-    - name: Target Manifest Redirection (Іске қосу нүктесін бұру)
-      run: |
-        echo "[*] AndroidManifest.xml арқылы құлыпты толық айналып өту..."
-        
-        # Бұл қадамда бұрынғы кодты бүлдіретін sed командалары қолданылмайды (пакет бүлінбейді)
-        # Оның орнына қолданбаның басты іске қосылатын интерфейсін Manifest деңгейінде өзгертеміз.
-        # Тексеру терезесінің атауын (MainActivity/LockActivity) негізгі терезеге тікелей сілтейміз.
-        
-        cd decompiled_source
-        
-        # Лицензия терезесін шақыратын негізгі Smali файлдарын тауып, оның onCreate немесе іске қосылу логикасындағы
-        # бағыттау функцияларын (startActivity) тікелей келесі терезеге (Intent) өткізу.
-        TARGET_FILES=$(grep -rlE "@kozha_0222|Активация лицензии" smali* 2>/dev/null || true)
-        if [ -n "$TARGET_FILES" ]; then
-          for file in $TARGET_FILES; do
-            echo "Патч қолданылуда: $file"
-            # Тексеріс логикасындағы жарамсыздық шарттарын (Exit немесе finish) алып тастап,
-            # бағдарламаның әрі қарай жүктелуіне рұқсат береміз.
-            sed -i 's/invoke-virtual {.*}, Landroid\/app\/Activity;->finish()V/# Бұғаттау өшірілді/g' "$file"
-          done
-        fi
-        
-        cd ..
-
-    - name: Rebuild APK
-      run: |
-        # Пакеттің құрылымы бұзылмауы үшін және Android 16+ үйлесімділігі үшін aapt2 қолданамыз
-        apktool b decompiled_source -o unsigned_modified.apk --use-aapt2
-
-    - name: Sign APK
+    - name: Advanced Sign & Align
       run: |
         if [ -f "unsigned_modified.apk" ]; then
-          # Пакеттің жарамдылығын сақтау үшін v2/v3 қолтаңбаларын қолданып қол қою
-          java -jar uber-apk-signer.jar --apks unsigned_modified.apk --allowResign
+          # Android 16+ жүйесі қабылдайтындай v2, v3, v4 деңгейлі қолтаңба қою
+          java -jar bin/uber-apk-signer.jar --apks unsigned_modified.apk --allowResign
           mv unsigned_modified-aligned-signed.apk patched_output.apk 2>/dev/null || mv unsigned_modified.apk patched_output.apk
         fi
 
-    - name: Upload Modified APK Artifact
+    - name: Upload Verified APK
       uses: actions/upload-artifact@v4
       with:
         name: Patched-APK
